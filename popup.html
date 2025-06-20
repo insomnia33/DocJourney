@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"> <!-- Corrected charset -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doc Tracker</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Doc Journey Tracker</h1>
+            <div class="header-right"> <!-- Container for refresh and progress -->
+                <span id="progressDisplay" class="progress-display">Loading...</span>
+                <button id="refreshButton" title="Refresh Structure">🔄</button>
+            </div>
+        </header>
+        <div id="lessonsList" class="lessons-list">
+            <p>Loading structure...</p>
+        </div>
+        <div id="notesModal" class="modal">
+            <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h3 id="notesModalTitle">Notes for...</h3>
+                <textarea id="notesTextarea" placeholder="Write your notes here..."></textarea>
+                <button id="saveNoteButton">Save Note</button>
+            </div>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
