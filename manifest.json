@@ -24,7 +24,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://docs.blender.org/manual/en/latest/*"],
+      "matches": ["<all_urls>"],
       "js": ["content.js"]
     }
   ],

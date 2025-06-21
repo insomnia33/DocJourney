@@ -333,3 +333,270 @@ console.log("Doc Tracker content script loaded.");
     overlayBtn.onclick = toggleOverlay;
 })();
 
+// === UNIVERSAL TITLE TRACKING SYSTEM ===
+(function() {
+    if (window.__docTrackerUniversalInjected) return;
+    window.__docTrackerUniversalInjected = true;
+
+    // Helper: get a unique key for the current page (by URL, ignoring hash)
+    function getPageKey() {
+        return window.location.origin + window.location.pathname;
+    }
+
+    // Helper: get all candidate headings (h1, h2, h3, h4, h5, h6)
+    function getAllHeadings() {
+        return Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+    }
+
+    // Helper: get a unique id for a heading (by page + tag + text + index)
+    function getHeadingId(heading) {
+        const pageKey = getPageKey();
+        const tag = heading.tagName;
+        const text = heading.innerText.trim().replace(/\s+/g, ' ').substring(0, 80);
+        // Index among siblings with same tag and text
+        const siblings = Array.from(document.querySelectorAll(tag));
+        let idx = 0;
+        for (let i = 0; i < siblings.length; i++) {
+            if (siblings[i] === heading) { idx = i; break; }
+        }
+        return `${pageKey}::${tag}::${text}::${idx}`;
+    }
+
+    // --- Mode toggle ---
+    let mode = localStorage.getItem('docTrackerMode') || 'auto'; // 'auto' or 'manual'
+    const modeBtn = document.createElement('button');
+    modeBtn.textContent = mode === 'auto' ? 'Modo: AutoSelect' : 'Modo: Manual';
+    modeBtn.title = 'Alternar entre seleção automática (AutoSelect) e manual de títulos';
+    modeBtn.style.position = 'fixed';
+    modeBtn.style.top = '60px';
+    modeBtn.style.right = '20px';
+    modeBtn.style.zIndex = '99999';
+    modeBtn.style.background = '#ffc107';
+    modeBtn.style.color = '#222';
+    modeBtn.style.border = 'none';
+    modeBtn.style.borderRadius = '5px';
+    modeBtn.style.padding = '8px 14px';
+    modeBtn.style.fontSize = '1em';
+    modeBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+    modeBtn.style.cursor = 'pointer';
+    modeBtn.style.opacity = '0.85';
+    modeBtn.style.transition = 'opacity 0.2s';
+    modeBtn.onmouseenter = () => modeBtn.style.opacity = '1';
+    modeBtn.onmouseleave = () => modeBtn.style.opacity = '0.85';
+    document.body.appendChild(modeBtn);
+
+    // Overlay button to enable selection mode
+    const selectBtn = document.createElement('button');
+    selectBtn.textContent = 'Selecionar Títulos';
+    selectBtn.title = 'Clique para escolher quais títulos do conteúdo deseja trackear';
+    selectBtn.style.position = 'fixed';
+    selectBtn.style.top = '100px';
+    selectBtn.style.right = '20px';
+    selectBtn.style.zIndex = '99999';
+    selectBtn.style.background = '#28a745';
+    selectBtn.style.color = 'white';
+    selectBtn.style.border = 'none';
+    selectBtn.style.borderRadius = '5px';
+    selectBtn.style.padding = '10px 16px';
+    selectBtn.style.fontSize = '1.1em';
+    selectBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+    selectBtn.style.cursor = 'pointer';
+    selectBtn.style.opacity = '0.85';
+    selectBtn.style.transition = 'opacity 0.2s';
+    selectBtn.onmouseenter = () => selectBtn.style.opacity = '1';
+    selectBtn.onmouseleave = () => selectBtn.style.opacity = '0.85';
+    document.body.appendChild(selectBtn);
+
+    // --- GLOBAL TRACKING STORAGE ---
+    // Instead of per-page, store all tracked headings in a single global object
+    const GLOBAL_KEY = 'docTrackerGlobal';
+    let trackedHeadings = {};
+
+    // Load all tracked headings (global)
+    function loadTrackedHeadings(callback) {
+        chrome.storage.local.get([GLOBAL_KEY], (data) => {
+            trackedHeadings = data[GLOBAL_KEY] || {};
+            callback();
+        });
+    }
+
+    // Save all tracked headings (global)
+    function saveTrackedHeadings() {
+        chrome.storage.local.set({ [GLOBAL_KEY]: trackedHeadings });
+    }
+
+    // --- AutoSelect logic ---
+    function autoSelectHeadings() {
+        // Track all h1, h2, h3 by default
+        const headings = getAllHeadings().filter(h => ['H1','H2','H3'].includes(h.tagName));
+        let changed = false;
+        headings.forEach(heading => {
+            const id = getHeadingId(heading);
+            if (!trackedHeadings[id]) {
+                trackedHeadings[id] = { completed: false };
+                changed = true;
+            }
+        });
+        // Optionally, remove headings that are no longer present on any page
+        // (optional: keep for global progress, or clean up if desired)
+        if (changed) saveTrackedHeadings();
+    }
+
+    // Render checkboxes next to tracked headings (only for current page)
+    function renderCheckboxes() {
+        document.querySelectorAll('.doc-tracker-title-checkbox').forEach(cb => cb.remove());
+        getAllHeadings().forEach(heading => {
+            const id = getHeadingId(heading);
+            if (trackedHeadings[id]) {
+                let cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.className = 'doc-tracker-title-checkbox';
+                cb.style.marginRight = '8px';
+                cb.style.transform = 'scale(1.2)';
+                cb.checked = trackedHeadings[id].completed || false;
+                cb.title = 'Marcar como concluído';
+                cb.addEventListener('change', () => {
+                    trackedHeadings[id].completed = cb.checked;
+                    saveTrackedHeadings();
+                    updateProgressOverlay();
+                });
+                if (heading.firstChild && heading.firstChild.classList && heading.firstChild.classList.contains('doc-tracker-title-checkbox')) {
+                    heading.removeChild(heading.firstChild);
+                }
+                heading.insertBefore(cb, heading.firstChild);
+            } else {
+                if (heading.firstChild && heading.firstChild.classList && heading.firstChild.classList.contains('doc-tracker-title-checkbox')) {
+                    heading.removeChild(heading.firstChild);
+                }
+            }
+        });
+    }
+
+    // Overlay to show global progress
+    const progressDiv = document.createElement('div');
+    progressDiv.style.position = 'fixed';
+    progressDiv.style.top = '140px';
+    progressDiv.style.right = '20px';
+    progressDiv.style.zIndex = '99999';
+    progressDiv.style.background = '#222';
+    progressDiv.style.color = '#fff';
+    progressDiv.style.padding = '8px 16px';
+    progressDiv.style.borderRadius = '5px';
+    progressDiv.style.fontSize = '1em';
+    progressDiv.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+    progressDiv.style.display = 'none';
+    document.body.appendChild(progressDiv);
+
+    function updateProgressOverlay() {
+        const allIds = Object.keys(trackedHeadings);
+        const total = allIds.length;
+        const completed = allIds.filter(id => trackedHeadings[id].completed).length;
+        if (total > 0) {
+            const percent = Math.round((completed / total) * 100);
+            progressDiv.textContent = `Progresso global: ${completed}/${total} (${percent}%)`;
+            progressDiv.style.display = 'block';
+        } else {
+            progressDiv.style.display = 'none';
+        }
+    }
+
+    // --- Selection mode ---
+    let selectionMode = false;
+
+    function enableSelectionMode() {
+        selectionMode = true;
+        selectBtn.textContent = 'Concluir Seleção';
+        getAllHeadings().forEach(heading => {
+            heading.style.outline = '2px dashed #28a745';
+            heading.style.cursor = 'pointer';
+            heading.addEventListener('mouseenter', highlightHeading);
+            heading.addEventListener('mouseleave', unhighlightHeading);
+            heading.addEventListener('click', toggleTrackHeading, true);
+        });
+    }
+    function disableSelectionMode() {
+        selectionMode = false;
+        selectBtn.textContent = 'Selecionar Títulos';
+        getAllHeadings().forEach(heading => {
+            heading.style.outline = '';
+            heading.style.cursor = '';
+            heading.removeEventListener('mouseenter', highlightHeading);
+            heading.removeEventListener('mouseleave', unhighlightHeading);
+            heading.removeEventListener('click', toggleTrackHeading, true);
+        });
+        renderCheckboxes();
+    }
+    function highlightHeading(e) {
+        e.target.style.background = '#eaffea';
+    }
+    function unhighlightHeading(e) {
+        e.target.style.background = '';
+    }
+    function toggleTrackHeading(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const heading = e.currentTarget;
+        const id = getHeadingId(heading);
+        if (trackedHeadings[id]) {
+            delete trackedHeadings[id];
+        } else {
+            trackedHeadings[id] = { completed: false };
+        }
+        saveTrackedHeadings();
+        renderCheckboxes();
+        updateProgressOverlay();
+    }
+
+    // Button click toggles selection mode
+    selectBtn.onclick = () => {
+        if (!selectionMode) {
+            disableAutoSelect();
+            enableSelectionMode();
+        } else {
+            disableSelectionMode();
+        }
+    };
+
+    // Mode button toggles between auto/manual
+    modeBtn.onclick = () => {
+        mode = mode === 'auto' ? 'manual' : 'auto';
+        localStorage.setItem('docTrackerMode', mode);
+        modeBtn.textContent = mode === 'auto' ? 'Modo: AutoSelect' : 'Modo: Manual';
+        if (mode === 'auto') {
+            disableSelectionMode();
+            autoSelectHeadings();
+            renderCheckboxes();
+            updateProgressOverlay();
+        } else {
+            disableSelectionMode();
+            renderCheckboxes();
+            updateProgressOverlay();
+        }
+    };
+
+    // Helper to disable auto select (for manual mode)
+    function disableAutoSelect() {
+        // Do nothing for now, but could clear trackedHeadings if desired
+    }
+
+    // On load, render checkboxes and progress
+    loadTrackedHeadings(() => {
+        if (mode === 'auto') {
+            autoSelectHeadings();
+        }
+        renderCheckboxes();
+        updateProgressOverlay();
+    });
+
+    // Also update on navigation (for SPA docs)
+    window.addEventListener('popstate', () => {
+        loadTrackedHeadings(() => {
+            if (mode === 'auto') {
+                autoSelectHeadings();
+            }
+            renderCheckboxes();
+            updateProgressOverlay();
+        });
+    });
+})();
+
